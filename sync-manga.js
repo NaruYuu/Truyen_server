@@ -5,7 +5,7 @@ const FormData = require('form-data'); // Cần thư viện này để upload fi
 
 // --- CẤU HÌNH ---
 const CONFIG = {
-    IP_IPHONE: "192.168.1.4", // Đổi IP iPhone của bạn vào đây
+    IP_IPHONE: "192.168.100.225", // Đổi IP iPhone của bạn vào đây
     PORT: "5000",
     PASSWORD: "naruyuu2203",
     LOCAL_FOLDER: "C:\\Users\\NaruYuu\\Documents\\Mangas", 
