@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data'); // Cần thư viện này để upload file
+const dgram = require('dgram'); // THÊM: Thư viện để nghe UDP Broadcast
 
 // --- CẤU HÌNH ---
 const CONFIG = {
-    IP_IPHONE: "192.168.100.225", // Đổi IP iPhone của bạn vào đây
+    IP_IPHONE: "", // Bỏ trống, tool sẽ tự động nhận diện từ iPhone
     PORT: "5000",
     PASSWORD: "naruyuu2203",
     LOCAL_FOLDER: "C:\\Users\\NaruYuu\\Documents\\Mangas", 
@@ -15,7 +16,9 @@ const CONFIG = {
     UPLOAD_TIMEOUT: 60000       // 60 giây timeout cho upload
 };
 
-const SERVER_URL = `http://${CONFIG.IP_IPHONE}:${CONFIG.PORT}`;
+// CẬP NHẬT: Đổi từ const sang let để có thể cập nhật IP mới, và thêm biến isSyncing
+let SERVER_URL = `http://${CONFIG.IP_IPHONE}:${CONFIG.PORT}`;
+let isSyncing = false; 
 
 // Hàm ghi log
 function log(type, msg) {
@@ -27,14 +30,59 @@ function log(type, msg) {
 // Hàm ngủ (để tránh spam server khi upload)
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function syncManga() {
+// GIỮ NGUYÊN hàm này theo yêu cầu (nhưng không gọi nữa vì đã có UDP)
+async function getServerIP() {
     try {
-        log('INFO', 'Bắt đầu quét thư mục...');
-
-        if (!fs.existsSync(CONFIG.LOCAL_FOLDER)) {
-            throw new Error(`Thư mục không tồn tại: ${CONFIG.LOCAL_FOLDER}`);
+        const ipResp = await axios.get(`${SERVER_URL}/api/get_ip`);
+        if (!ipResp || !ipResp.data.ip) {
+            log('WARN', 'Không thể lấy được IP từ server.');
+            return null;
         }
+        return ipResp.data.ip;
+    } catch (error) {
+        console.error(`Lỗi khi lấy IP mới:`, error);
+        return null;
+    }
+}
 
+// --- THÊM: BỘ LẮNG NGHE TÍN HIỆU TỪ IPHONE ---
+function listenForServer() {
+    const udpClient = dgram.createSocket('udp4');
+    
+    udpClient.on('listening', () => {
+        log('INFO', 'Đang lắng nghe tín hiệu IP từ mạng LAN...');
+    });
+
+    udpClient.on('message', (msg, rinfo) => {
+        const text = msg.toString();
+        // Nếu nhận đúng tín hiệu từ Server Manga
+        if (text.startsWith('MANGA_SERVER|')) {
+            const parts = text.split('|');
+            const newIP = parts[1];
+            const newPort = parts[2];
+            
+            if (CONFIG.IP_IPHONE !== newIP) {
+                CONFIG.IP_IPHONE = newIP;
+                SERVER_URL = `http://${CONFIG.IP_IPHONE}:${newPort}`;
+                log('SUCCESS', `Đã tìm thấy Server iPhone tại IP: ${newIP}`);
+                
+                // Kích hoạt đồng bộ ngay khi tìm thấy IP lần đầu (nếu chưa chạy)
+                if (!isSyncing) syncManga(); 
+            }
+        }
+    });
+
+    udpClient.bind(5555); // Nghe trên cổng 5555
+}
+
+async function syncManga() {
+    // THÊM: Chặn không cho chạy nếu chưa có IP hoặc đang trong quá trình sync
+    if (!CONFIG.IP_IPHONE) return; 
+    if (isSyncing) return;
+    isSyncing = true;
+
+    try {
+        
         // 1. Lấy danh sách Truyện (Series)
         const seriesList = fs.readdirSync(CONFIG.LOCAL_FOLDER, { withFileTypes: true })
             .filter(dirent => dirent.isDirectory())
@@ -42,7 +90,7 @@ async function syncManga() {
 
         if (seriesList.length === 0) {
             log('WARN', 'Thư mục trống, không có truyện nào.');
-            scheduleNextRun(false); return;
+            isSyncing = false; scheduleNextRun(false); return; // Cập nhật trạng thái
         }
 
         // 2. Duyệt từng Truyện
@@ -113,7 +161,7 @@ async function syncManga() {
         }
 
         log('SUCCESS', 'Đã đồng bộ xong toàn bộ dữ liệu!');
-        scheduleNextRun(false); // Xong việc -> Nghỉ 5 phút
+        isSyncing = false; scheduleNextRun(false); // Xong việc -> Nghỉ 5 phút
 
     } catch (error) {
         let msg = error.message;
@@ -121,7 +169,7 @@ async function syncManga() {
         
         log('ERROR', `Lỗi tổng quá trình: ${msg}`);
         log('WARN', `Thử lại sau 5 giây...`);
-        scheduleNextRun(true); // Lỗi -> Thử lại sau 5s
+        isSyncing = false; scheduleNextRun(true); // Lỗi -> Thử lại sau 5s
     }
 }
 
@@ -131,5 +179,5 @@ function scheduleNextRun(isError) {
 }
 
 // --- MAIN ---
-log('INFO', `🚀 Tool Sync khởi động. Target: ${SERVER_URL}`);
-syncManga();
+log('INFO', `🚀 Tool Sync khởi động. Đang chờ kết nối từ iPhone...`);
+listenForServer(); // CẬP NHẬT: Thay vì gọi syncManga(), chúng ta mở cổng để nghe iPhone hét IP

@@ -94,6 +94,67 @@ app.post('/download', async (req, res) => {
     }
 });
 
+// --- [MỚI] API KIỂM TRA FILE
+app.post('/api/sync/check_file', async (req, res) => {
+    try {
+        const { filePath } = req.body;
+
+        if (!filePath) {
+            console.log("❌ Request thiếu dữ liệu!");
+            return res.status(400).send('Thiếu thông tin');
+        }
+
+        const fileExists = fs.existsSync(path.join(__dirname, 'path/to/your/manga', filePath));
+
+        res.status(200).send({ exists: fileExists });
+
+    } catch (error) {
+        console.error(`❌ LỖI: ${error.message}`);
+        res.status(500).send({ error: error.message });
+    }
+});
+
+// --- [MỚI] API UPLOAD FILE
+app.post('/api/sync/upload', async (req, res) => {
+    try {
+        const form = new FormData(req);
+        const file = form.get('file');
+
+        if (!form.has('password') || !form.has('path') || !file) {
+            console.log("❌ Request thiếu dữ liệu!");
+            return res.status(400).send('Thiếu thông tin');
+        }
+
+        const password = form.get('password');
+        const path = form.get('path');
+
+        // Kiểm tra mật khẩu
+        if (password !== CONFIG.PASSWORD) {
+            return res.status(403).send('Mật khẩu không đúng');
+        }
+
+        await fs.ensureDir(path);
+        const savePath = path.join(__dirname, 'path/to/your/manga', path);
+
+        // Tạo đường dẫn lưu file
+        const fileName = file.name;
+        const filePath = path.join(savePath, fileName);
+
+        // Lưu file vào máy tính
+        await new Promise((resolve, reject) => {
+            file.createReadStream().pipe(fs.createWriteStream(filePath))
+                .on('finish', resolve)
+                .on('error', reject);
+        });
+
+        res.status(200).send({ status: 'success' });
+
+    } catch (error) {
+        console.error(`❌ LỖI: ${error.message}`);
+        res.status(500).send({ error: error.message });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
 });
