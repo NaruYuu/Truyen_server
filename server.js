@@ -66,7 +66,7 @@ async function downloadWithRetry(imageUrl, savePath, headers, attempt = 1) {
 
 app.post('/download', async (req, res) => {
     try {
-        const { imageUrl, savePath, referer, cookies } = req.body;
+        const { imageUrl, savePath, referer, cookies, mangaTitle, chapterTitle, pageIndex } = req.body;
 
         if (!imageUrl || !savePath) {
             console.log("❌ Request thiếu dữ liệu!");
@@ -82,7 +82,8 @@ app.post('/download', async (req, res) => {
         
         if (cookies) headers['Cookie'] = cookies;
 
-        console.log(`⬇️ [DOWNLOAD] ${path.basename(savePath)}`);
+        const entry = `${mangaTitle || 'Unknown Manga'}/${chapterTitle || 'Unknown Chap'} - ${path.basename(savePath)}`;
+        console.log(`⬇️ [DOWNLOAD] ${entry}`);
         
         await downloadWithRetry(imageUrl, savePath, headers);
 
