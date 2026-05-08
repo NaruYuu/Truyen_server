@@ -98,14 +98,14 @@ app.post('/download', async (req, res) => {
 // --- [MỚI] API KIỂM TRA FILE
 app.post('/api/sync/check_file', async (req, res) => {
     try {
-        const { filePath } = req.body;
+        const { savePath } = req.body;
 
-        if (!filePath) {
+        if (!savePath) {
             console.log("❌ Request thiếu dữ liệu!");
             return res.status(400).send('Thiếu thông tin');
         }
 
-        const fileExists = fs.existsSync(path.join(__dirname, 'path/to/your/manga', filePath));
+        const fileExists = fs.existsSync(savePath);
 
         res.status(200).send({ exists: fileExists });
 
