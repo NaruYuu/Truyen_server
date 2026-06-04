@@ -64,6 +64,107 @@ async function downloadWithRetry(imageUrl, savePath, headers, attempt = 1) {
     }
 }
 
+async function getFileStat(filePath) {
+    try {
+        const stat = await fs.stat(filePath);
+        return stat.isFile() ? stat : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function groupFilesByBase(folder) {
+    const items = await fs.readdir(folder);
+    const groups = {};
+
+    for (const fileName of items) {
+        const fullPath = path.join(folder, fileName);
+        const stat = await getFileStat(fullPath);
+        if (!stat) continue;
+        const base = path.basename(fileName, path.extname(fileName));
+        if (!groups[base]) groups[base] = [];
+        groups[base].push({ path: fullPath, size: stat.size, name: fileName });
+    }
+
+    return groups;
+}
+
+async function dedupeFolder(folder) {
+    const groups = await groupFilesByBase(folder);
+
+    for (const base in groups) {
+        const files = groups[base];
+        if (files.length <= 1) continue;
+
+        files.sort((a, b) => b.size - a.size);
+        const keep = files[0];
+        const removeList = files.slice(1);
+
+        for (const item of removeList) {
+            try {
+                await fs.remove(item.path);
+                console.log(`🗑️ Xóa file trùng trong folder: ${item.name} (${item.size} bytes)`);
+            } catch (err) {
+                console.warn(`⚠️ Không xóa được ${item.path}: ${err.message}`);
+            }
+        }
+
+        if (removeList.length > 0) {
+            console.log(`✅ Giữ bản tốt nhất cho '${base}': ${keep.name} (${keep.size} bytes)`);
+        }
+    }
+}
+
+async function resolveDuplicateQuality(savePath, tempPath) {
+    const folder = path.dirname(savePath);
+    const baseName = path.basename(savePath, path.extname(savePath));
+
+    const items = await fs.readdir(folder);
+    const candidates = [];
+
+    for (const fileName of items) {
+        if (path.basename(fileName, path.extname(fileName)) !== baseName) continue;
+        const fullPath = path.join(folder, fileName);
+        const stat = await getFileStat(fullPath);
+        if (stat) candidates.push({ path: fullPath, size: stat.size, isTemp: false });
+    }
+
+    const tempStat = await getFileStat(tempPath);
+    if (tempStat) candidates.push({ path: tempPath, size: tempStat.size, isTemp: true });
+
+    if (candidates.length === 0) {
+        // Không có file nào để so sánh, giữ tạm file tải xuống
+        if (await fs.pathExists(tempPath)) {
+            await fs.move(tempPath, savePath, { overwrite: true });
+        }
+        return;
+    }
+
+    candidates.sort((a, b) => b.size - a.size);
+    const best = candidates[0];
+
+    for (const item of candidates.slice(1)) {
+        try {
+            await fs.remove(item.path);
+            console.log(`🗑️ Xóa file trùng kém hơn: ${path.basename(item.path)} (${item.size} bytes)`);
+        } catch (err) {
+            console.warn(`⚠️ Không xóa được ${item.path}: ${err.message}`);
+        }
+    }
+
+    if (best.isTemp) {
+        await fs.move(best.path, savePath, { overwrite: true });
+        console.log(`✅ Giữ bản tải mới chất lượng cao nhất: ${path.basename(savePath)} (${best.size} bytes)`);
+    } else {
+        if (await fs.pathExists(tempPath)) {
+            await fs.remove(tempPath);
+        }
+        console.log(`✅ Giữ bản hiện có chất lượng tốt hơn: ${path.basename(best.path)} (${best.size} bytes)`);
+    }
+
+    await dedupeFolder(folder);
+}
+
 app.post('/download', async (req, res) => {
     try {
         const { imageUrl, savePath, referer, cookies, mangaTitle, chapterTitle, pageIndex } = req.body;
@@ -75,6 +176,7 @@ app.post('/download', async (req, res) => {
 
         await fs.ensureDir(path.dirname(savePath));
 
+        const tempPath = `${savePath}.${Date.now()}.tmp`;
         const headers = {
             'Referer': referer,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -85,7 +187,8 @@ app.post('/download', async (req, res) => {
         const entry = `${mangaTitle || 'Unknown Manga'}/${chapterTitle || 'Unknown Chap'} - ${path.basename(savePath)}`;
         console.log(`⬇️ [DOWNLOAD] ${entry}`);
         
-        await downloadWithRetry(imageUrl, savePath, headers);
+        await downloadWithRetry(imageUrl, tempPath, headers);
+        await resolveDuplicateQuality(savePath, tempPath);
 
         res.status(200).send({ status: 'success' });
 
